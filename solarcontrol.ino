@@ -4,48 +4,86 @@
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <avr/wdt.h>
+
+#include <MemoryFree.h>
 
 LiquidCrystal_I2C lcd(0x3F, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 // Temp. thresholds
-float maxOffT = 80; // Aus. Max Buffer temp. erreicht.
-float maxOnT = 75; // Wieder ein nach max. Buffer temp. erreicht
-float minOnT = 65; // Ein.. Min. solar temp.
-float minOffT = 60; // Wieder aus nach min. Solar temp. erreicht
-float diffOnT = 8; // Ein wenn Temp. Diff größer
-float diffOffT = 6; // Wieder aus, wenn Temp. Diff. kleinergleich
+const float maxSolarOffT = 140; // Aus. Max Solar temp.
+const float maxSolarOnT = 135; // Wieder ein nach max. Solar temp. erreicht
+const float maxPufferOffT = 80; // Aus. Max Buffer temp. erreicht.
+const float maxPufferOnT = 75; // Wieder ein nach max. Buffer temp. erreicht
+const float minSolarOnT = 65; // Ein.. Min. solar temp.
+const float minSolarOffT = 60; // Wieder aus nach min. Solar temp. erreicht
+const float diffOnT = 8; // Ein wenn Temp. Diff größer
+const float diffOffT = 6; // Wieder aus, wenn Temp. Diff. kleinergleich
 
-boolean maxOffReached = false;
+// Resistance used in the measurement circuit
+const float R_meas = 2190;
+
+// Temp. sensor resistance at 25°C
+const int R_25 = 2000;
+
+// Temp. sensor coefficients
+const double alpha = 0.00788;
+const double beta = 0.00001937;
+const float alpha_pow2 = 0.000062;
+const float beta_mul4 = 0.000078;
+const float beta_mul2 = 0.000039;
+
+// Solar pump relay
+const int pumpPin = 2;
+
+// Sensor pins
+const int bufferPin = 0;
+const int solarPin = 1;
+
+// Control state variables
+boolean maxSolarOffReached = false;
+boolean maxPufferOffReached = false;
 boolean minOnReached = false;
 boolean diffOnReached = false;
 
-// Resistance used in the measurement circuit
-float R_meas = 2190;
+void setup() {
+  wdt_disable();
+  Serial.begin(115200);
 
-// Temp. sensor resistance at 25°C
-int R_25 = 2000;
+  lcd.begin(20, 4);
 
-// Solar pump relay
-int pumpPin = 2;
+  // initialize the digital pins as an output.
+  pinMode(pumpPin, OUTPUT);
+  digitalWrite(pumpPin, LOW);
 
-// Sensor pins
-int bufferPin = 0;
-int solarPin = 1;
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
+  //controlTest();
+
+  wdt_enable(WDTO_8S);
+}
 
 boolean solarControl(float tempBuffer, float tempSolar) {
 
   float tempDiff = tempSolar - tempBuffer;
 
-  if (!maxOffReached) {
-    maxOffReached = tempBuffer >= maxOffT;
+  if (!maxSolarOffReached) {
+    maxSolarOffReached = tempSolar >= maxSolarOffT;
   } else {
-    maxOffReached = tempBuffer > maxOnT;
+    maxSolarOffReached = tempSolar > maxSolarOnT;
+  }
+
+  if (!maxPufferOffReached) {
+    maxPufferOffReached = tempBuffer >= maxPufferOffT;
+  } else {
+    maxPufferOffReached = tempBuffer > maxPufferOnT;
   }
 
   if (!minOnReached) {
-    minOnReached = tempSolar >= minOnT;
+    minOnReached = tempSolar >= minSolarOnT;
   } else {
-    minOnReached = tempSolar > minOffT;
+    minOnReached = tempSolar > minSolarOffT;
   }
 
   if (!diffOnReached) {
@@ -54,215 +92,187 @@ boolean solarControl(float tempBuffer, float tempSolar) {
     diffOnReached = tempDiff > diffOffT;
   }
 
-  /*Serial.print(" ");
-    Serial.print("maxOffReached=");
-    Serial.print(maxOffReached);
-    Serial.print(" ");
-    Serial.print("minOnReached=");
-    Serial.print(minOnReached);
-    Serial.print(" ");
-    Serial.print("diffOnReached=");
-    Serial.print(diffOnReached);
-    Serial.print(" ");*/
+  Serial.print(F(" "));
+  Serial.print(F("maxSolarOffReached="));
+  Serial.print(maxSolarOffReached);
+  Serial.print(F(" "));
+  Serial.print(F("maxPufferOffReached="));
+  Serial.print(maxPufferOffReached);
+  Serial.print(F(" "));
+  Serial.print(F("minOnReached="));
+  Serial.print(minOnReached);
+  Serial.print(F(" "));
+  Serial.print(F("diffOnReached="));
+  Serial.print(diffOnReached);
+  Serial.print(F(" "));
 
-  return !maxOffReached && minOnReached && diffOnReached;
-}
-
-void setup() {
-  Serial.begin(115200);
-
-  lcd.begin(20, 4);
-
-  // initialize the digital pin as an output.
-  pinMode(pumpPin, OUTPUT);
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(pumpPin, LOW);
-  digitalWrite(LED_BUILTIN, LOW);
-
-  //controlTest();
+  return !maxSolarOffReached && !maxPufferOffReached && minOnReached && diffOnReached;
 }
 
 void loop() {
 
-  float tempBuffer = readTempPoly(bufferPin);
-  float tempSolar = readTempPoly(solarPin);
+  Serial.print(F("*START*"));
+
+  Serial.print(F("*TEMPS*"));
+  float tempBuffer = readTemp(bufferPin);
+  float tempSolar = readTemp(solarPin);
 
   bool pumpOn = false;
+  Serial.print(F("*CONTROL*"));
   pumpOn = solarControl(tempBuffer, tempSolar);
 
+  Serial.print(F("*SETPUMP*"));
   setPump(pumpOn);
 
+  Serial.print(F("*DISPLAY*"));
   displayStatus(tempBuffer, tempSolar, pumpOn);
 
+  Serial.print(F("*STATUS*"));
+  Serial.print(F(" tempBuffer="));
   Serial.print(tempBuffer);
-  Serial.print(";");
+  Serial.print(F(" tempSolar="));
   Serial.print(tempSolar);
-  Serial.print(";");
+  Serial.print(F(" pumpOn="));
   Serial.print(pumpOn);
+
+  Serial.print(F("freeMemory()="));
+  Serial.println(freeMemory());
+
+  Serial.print(F("*END*"));
   Serial.println();
 
-  delay(1000);
+  wdt_delay(1000);
 }
 
 
 void displayStatus(float tempBuffer, float tempSolar, bool pumpOn) {
   //lcd.clear();
   lcd.setCursor ( 0, 0 );
-  lcd.print ("GCC Pumpe     ");
-  lcd.print (pumpOn ? "an " : "aus");
+  lcd.print (F("GCC Pumpe     "));
+  lcd.print (pumpOn ? F("an ") : F("aus"));
 
-  lcd.setCursor ( 0, 1 );
-  lcd.print("    Solar    ");
+  lcd.setCursor ( 4, 1 );
+  lcd.print(F("Solar    "));
 
   if (tempSolar < 10 && tempSolar >= 0) {
-    lcd.print ("  ");
+    lcd.print (F("  "));
   } else if (tempSolar < 100 && tempSolar >= 10) {
-    lcd.print (" ");
+    lcd.print (F(" "));
   }
 
   lcd.print(tempSolar, 1);
-  lcd.write(byte(0xDF));
-  lcd.print ("C");
-  //lcd.print ("     "); // Clear remaining chars
+  lcd.print(byte(0xDF));
+  lcd.print (F("C"));
 
-  lcd.setCursor ( 0, 2 );
-  lcd.print ("    Puffer    ");
+  lcd.setCursor ( 4, 2 );
+  lcd.print (F("Puffer    "));
   lcd.print (tempBuffer, 1);
-  lcd.write(byte(0xDF));
-  lcd.print ("C");
-  //lcd.print ("     "); // Clear remaining chars
+  lcd.print(byte(0xDF));
+  lcd.print (F("C"));
 
-  lcd.setCursor ( 0, 3 );
-  lcd.print ("    Delta     ");
+  lcd.setCursor ( 4, 3 );
+  lcd.print (F("Delta     "));
 
   float tempDiff = tempSolar - tempBuffer;
 
   if (tempDiff < 10 && tempDiff >= 0) {
-    lcd.print (" ");
+    lcd.print (F(" "));
   }
 
   lcd.print (tempDiff, 1);
-  lcd.write(byte(0xDF));
-  lcd.print ("C");
-  //lcd.print ("     "); // Clear remaining chars
+  lcd.print(byte(0xDF));
+  lcd.print (F("C"));
 }
 
 /*
   Read KTY10 sensor (2kOhm bei 25C) SECOND ORDER POLYNOMIAL based on
   http://pdf.datasheetcatalog.com/datasheet/infineon/1-kt.pdf
 */
-float readTempPoly(unsigned int port) {
-  float adc = 0;
-  ADCSRA = 0x00;
-  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-  ADMUX = 0x00;
-  ADMUX = (1 << REFS0);
-  ADMUX |= port;
+float readTemp(unsigned int port) {
+  int adc = 0;
 
-  for (int i = 0; i <= 63; i++)
+  for (int i = 0; i < 4; i++)
   {
-    ADCSRA |= (1 << ADSC);
-    while (ADCSRA & (1 << ADSC));
-    adc += (ADCL + ADCH * 256);
+    if (port == 0)
+      adc += analogRead(A0);
+    else if (port == 1)
+      adc += analogRead(A1);
   }
 
-  adc /= 64; // get loop avg
+  Serial.print(F(" adc:"));
+  Serial.print(adc);
 
-  float vcc = readVcc();
-  float U_sens = adc * vcc / 1023;
+  float adcAvg = adc / 4.0; // get loop avg
+
+  float vcc = 5.0;
+
+  float U_sens = adcAvg * vcc / 1023.0;
+
+  Serial.print(F(" U_sens:"));
+  Serial.print(U_sens);
 
   float I_sens = (vcc - U_sens) / R_meas;
+
+  Serial.print(F("  I_sens:"));
+  Serial.print(I_sens, 4);
+
   float R_sens = U_sens / I_sens;
+
+  Serial.print(F("  R_sens:"));
+  Serial.println(R_sens, 4);
+
 
   return calcTempPoly(R_sens);
 }
 
 float calcTempPoly(float R_T) {
-  double alpha = 0.00788;
-  double beta = 0.00001937;
 
-  double k_T = R_T / R_25;
+  float k_T = R_T / R_25;
 
-  double denominator = sqrt(pow(alpha, 2) - 4 * beta + 4 * beta * k_T) - alpha;
-  double T = (25 + (denominator / (2 * beta)));
+  Serial.print(F("  k_T:"));
+  Serial.print(k_T, 4);
 
-  /*Serial.print(R_T);
-    Serial.print("  ");
-    Serial.print(k_T, 4);
-    Serial.print("  ");
-    Serial.println(T, 4);*/
+  //double denominator = sqrt(pow(alpha, 2) - 4 * beta + 4 * beta * k_T) - alpha;
+
+  // With optimization
+  double denominator = sqrt(alpha_pow2 + beta_mul4 * (k_T - 1)) - alpha;
+
+  Serial.print(F(" denominator:"));
+  Serial.print(denominator);
+
+  float T = (25.0 + (denominator / beta_mul2));
+
+  Serial.print(F("  T:"));
+  Serial.println(T, 4);
 
   return T;
 }
 
-/*
-  Read KTY10 sensor (2kOhm bei 25C) LINEAR WAY based on
-  http://playground.arduino.cc/Deutsch/KtyTemperatureExtDe
-  http://www.sprut.de/electronic/pic/projekte/thermo/thermo.htm#kal
-*/
-float readTemp(unsigned int port) {
-  float temp = 0;
-  ADCSRA = 0x00;
-  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-  ADMUX = 0x00;
-  ADMUX = (1 << REFS0);
-  ADMUX |= port;
-
-  for (int i = 0; i <= 63; i++)
-  {
-    ADCSRA |= (1 << ADSC);
-    while (ADCSRA & (1 << ADSC));
-    temp += (ADCL + ADCH * 256);
-  }
-
-  // Consts, see the sheet
-  temp /= 64; // get loop avg
-  temp /= 1.74; // ADC / K
-  temp -= 227; // Temp. offset
-
-  return (temp);
-}
-
-
-float readVcc() {
-  // Read 1.1V reference against AVcc
-  // set the reference to Vcc and the measurement to the internal 1.1V reference
-#if defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
-  ADMUX = _BV(REFS0) | _BV(MUX4) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-#elif defined (__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__)
-  ADMUX = _BV(MUX5) | _BV(MUX0);
-#elif defined (__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
-  ADMUX = _BV(MUX3) | _BV(MUX2);
-#else
-  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-#endif
-
-  delay(2); // Wait for Vref to settle
-  ADCSRA |= _BV(ADSC); // Start conversion
-  while (bit_is_set(ADCSRA, ADSC)); // measuring
-
-  uint8_t low  = ADCL; // must read ADCL first - it then locks ADCH
-  uint8_t high = ADCH; // unlocks both
-
-  float result = (high << 8) | low;
-
-  result = 1125.300 / result; // Calculate Vcc (in mV); 1125.300 = 1.1*1023
-  return result; // Vcc in Volts
-}
-
 void setPump(bool on) {
   digitalWrite(pumpPin, on ? HIGH : LOW);
-  digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+  //digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+}
+
+void wdt_delay(unsigned long msec) {
+  wdt_reset();
+
+  while (msec > 1000) {
+    wdt_reset();
+    delay(1000);
+    msec -= 1000;
+  }
+  delay(msec);
+  wdt_reset();
 }
 
 
-struct ControlTestType {
+/*struct ControlTestType {
   float tempBuffer;
   float tempSolar;
   bool shouldPumpOn;
-};
+  };
 
-bool controlTest() {
+  bool controlTest() {
   bool failed = true;
 
   struct ControlTestType samples[] = {
@@ -302,5 +312,4 @@ bool controlTest() {
   }
 
   return !failed;
-}
-
+  }*/
