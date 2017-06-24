@@ -11,14 +11,14 @@
 LiquidCrystal_I2C lcd(0x3F, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 // Temp. thresholds
-const float maxSolarOffT = 140; // Aus. Max Solar temp.
-const float maxSolarOnT = 135; // Wieder ein nach max. Solar temp. erreicht
-const float maxPufferOffT = 80; // Aus. Max Buffer temp. erreicht.
-const float maxPufferOnT = 75; // Wieder ein nach max. Buffer temp. erreicht
-const float minSolarOnT = 65; // Ein.. Min. solar temp.
-const float minSolarOffT = 60; // Wieder aus nach min. Solar temp. erreicht
-const float diffOnT = 8; // Ein wenn Temp. Diff größer
-const float diffOffT = 6; // Wieder aus, wenn Temp. Diff. kleinergleich
+const float maxSolarOffT = 130; // Off. max. solar temp. is reached
+const float maxSolarOnT = 110; // Off->On after max. solar temp. was reached
+const float maxPufferOffT = 79; // Off. max. buffer temp. is reached
+const float maxPufferOnT = 75; // Off->On after max. puffer temp. is reached
+const float minSolarOnT = 50; // On. min. solar temp. is reached
+const float minSolarOffT = 45; // Off->On after min. solar temp. was reached
+const float diffOnT = 8; // On when temp. diff. is larger
+const float diffOffT = 6; // On->Off, when temp. diff. is smaller
 
 // Resistance used in the measurement circuit
 const float R_meas = 2190;
@@ -40,11 +40,17 @@ const int pumpPin = 2;
 const int bufferPin = 0;
 const int solarPin = 1;
 
+const float VCC = 5.0;
+
 // Control state variables
 boolean maxSolarOffReached = false;
 boolean maxPufferOffReached = false;
 boolean minOnReached = false;
 boolean diffOnReached = false;
+
+// Display reset
+const int displayResetSeconds = 60;
+int displayResetLast = 0;
 
 void setup() {
   wdt_disable();
@@ -146,7 +152,15 @@ void loop() {
 
 
 void displayStatus(float tempBuffer, float tempSolar, bool pumpOn) {
-  //lcd.clear();
+  
+  // Display reset after x seconds
+  if(displayResetLast < displayResetSeconds){
+    displayResetLast++;
+  } else {
+    lcd.clear();
+    displayResetLast = 0;
+  }
+  
   lcd.setCursor ( 0, 0 );
   lcd.print (F("GCC Pumpe     "));
   lcd.print (pumpOn ? F("an ") : F("aus"));
@@ -161,13 +175,13 @@ void displayStatus(float tempBuffer, float tempSolar, bool pumpOn) {
   }
 
   lcd.print(tempSolar, 1);
-  lcd.print(byte(0xDF));
+  lcd.write(byte(0xDF));
   lcd.print (F("C"));
 
   lcd.setCursor ( 4, 2 );
   lcd.print (F("Puffer    "));
   lcd.print (tempBuffer, 1);
-  lcd.print(byte(0xDF));
+  lcd.write(byte(0xDF));
   lcd.print (F("C"));
 
   lcd.setCursor ( 4, 3 );
@@ -180,38 +194,34 @@ void displayStatus(float tempBuffer, float tempSolar, bool pumpOn) {
   }
 
   lcd.print (tempDiff, 1);
-  lcd.print(byte(0xDF));
+  lcd.write(byte(0xDF));
   lcd.print (F("C"));
 }
 
 /*
-  Read KTY10 sensor (2kOhm bei 25C) SECOND ORDER POLYNOMIAL based on
+  Read KTY10 sensor (2kOhm at 25°C) by second order polynomial based on
   http://pdf.datasheetcatalog.com/datasheet/infineon/1-kt.pdf
 */
 float readTemp(unsigned int port) {
-  int adc = 0;
+  unsigned int adc = 0;
 
   for (int i = 0; i < 4; i++)
   {
-    if (port == 0)
-      adc += analogRead(A0);
-    else if (port == 1)
-      adc += analogRead(A1);
+      adc += analogRead(port);
   }
 
   Serial.print(F(" adc:"));
   Serial.print(adc);
 
-  float adcAvg = adc / 4.0; // get loop avg
+  //float adcAvg = adc / 4.0; // get loop avg
+  float adcAvg = adc >> 2;
 
-  float vcc = 5.0;
-
-  float U_sens = adcAvg * vcc / 1023.0;
+  float U_sens = adcAvg * VCC / 1023.0;
 
   Serial.print(F(" U_sens:"));
   Serial.print(U_sens);
 
-  float I_sens = (vcc - U_sens) / R_meas;
+  float I_sens = (VCC - U_sens) / R_meas;
 
   Serial.print(F("  I_sens:"));
   Serial.print(I_sens, 4);
