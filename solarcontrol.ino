@@ -11,9 +11,9 @@
 LiquidCrystal_I2C lcd(0x3F, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 // Temp. thresholds
-const float maxSolarOffT = 130; // Off. max. solar temp. is reached
-const float maxSolarOnT = 110; // Off->On after max. solar temp. was reached
-const float maxPufferOffT = 79; // Off. max. buffer temp. is reached
+const float maxSolarOffT = 110; // Off. max. solar temp. is reached
+const float maxSolarOnT = 105; // Off->On after max. solar temp. was reached
+const float maxPufferOffT = 77; // Off. max. buffer temp. is reached
 const float maxPufferOnT = 75; // Off->On after max. puffer temp. is reached
 const float minSolarOnT = 50; // On. min. solar temp. is reached
 const float minSolarOffT = 45; // Off->On after min. solar temp. was reached
